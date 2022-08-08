@@ -1,3 +1,4 @@
+/* Code taken from https://habr.com/ru/post/343828/ */
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
