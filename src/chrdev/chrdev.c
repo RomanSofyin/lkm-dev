@@ -7,7 +7,6 @@
 #include <linux/slab.h>
 #include <linux/cdev.h>
 
-static char *kbuf;
 static dev_t first;
 static unsigned int count = 1;
 static int my_major = 700, my_minor = 0;
@@ -16,16 +15,32 @@ static struct cdev *my_cdev;
 #define MYDEV_NAME "mychrdev"
 #define KBUF_SIZE (size_t)((10) * PAGE_SIZE)
 
-
 static int mychrdev_open(struct inode *inode, struct file *file)
 {
+    static int counter = 0;
+
+    char *kbuf = kmalloc(KBUF_SIZE, GFP_KERNEL);
+    file->private_data = kbuf;
+
     printk(KERN_INFO "Opening device %s\n\n", MYDEV_NAME);
+    counter++;
+
+    printk(KERN_INFO "kbuf = %p, counter = %d, mod refcounter = %d\n", kbuf, counter, module_refcount(THIS_MODULE));
     return 0;
 }
 
 static int mychrdev_release(struct inode *inode, struct file *file)
 {
+    char *kbuf = file->private_data;
     printk(KERN_INFO "Releasing device %s\n\n", MYDEV_NAME);
+
+    printk(KERN_INFO "Free kbuf = %p", kbuf);
+    if (kbuf)
+    {
+        kfree(kbuf);
+        kbuf = file->private_data = NULL;
+    }
+
     return 0;
 }
 
@@ -33,7 +48,8 @@ static ssize_t mychrdev_read(struct file *file,
                              char __user *buf,          // parm came from user space
                              size_t lbuf, loff_t *ppos) // long offset
 {
-    ssize_t nbytes = lbuf - copy_to_user(buf, kbuf+ *ppos, lbuf);   // copy to user space storage
+    char *kbuf = file->private_data;
+    ssize_t nbytes = lbuf - copy_to_user(buf, kbuf + *ppos, lbuf); // copy to user space storage
     *ppos += nbytes;
 
     printk(KERN_INFO "Reading device %s - nbytes = %ld, ppos = %lld\n\n", MYDEV_NAME, nbytes, *ppos);
@@ -45,17 +61,13 @@ static ssize_t __exit mychrdev_write(struct file *file,
                                      const char __user *buf, // parm came from user space
                                      size_t lbuf, loff_t *ppos)
 {
+    char *kbuf = file->private_data;
     ssize_t nbytes = lbuf - copy_from_user(kbuf + *ppos, buf, lbuf);
     *ppos += nbytes;
- 
-    printk(KERN_INFO "Writing device %s - nbytes = %ld, ppos = %lld \n\n", MYDEV_NAME, nbytes, *ppos);
- 
-    return nbytes;
-}
 
-static void __exit cleanup_chrdev(void)
-{
-    printk(KERN_INFO "Leaving");
+    printk(KERN_INFO "Writing device %s - nbytes = %ld, ppos = %lld \n\n", MYDEV_NAME, nbytes, *ppos);
+
+    return nbytes;
 }
 
 static const struct file_operations mycdev_fops = {
@@ -63,13 +75,11 @@ static const struct file_operations mycdev_fops = {
     .read = mychrdev_read,
     .write = mychrdev_write,
     .open = mychrdev_open,
-    .release = mychrdev_release
-};
+    .release = mychrdev_release};
 
 static int __init init_chrdev(void)
 {
     printk(KERN_INFO "Hello, loading");
-    kbuf = kmalloc(KBUF_SIZE, GFP_KERNEL);
 
     first = MKDEV(my_major, my_minor);
     register_chrdev_region(first, count, MYDEV_NAME);
@@ -80,6 +90,18 @@ static int __init init_chrdev(void)
     cdev_add(my_cdev, first, count);
 
     return 0;
+}
+
+static void __exit cleanup_chrdev(void)
+{
+    printk(KERN_INFO "Leaving");
+
+    if (my_cdev)
+    {
+        cdev_del(my_cdev);
+    }
+
+    unregister_chrdev_region(first, count);
 }
 
 module_init(init_chrdev);
