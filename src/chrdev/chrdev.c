@@ -15,6 +15,8 @@ static struct cdev *my_cdev;
 #define MYDEV_NAME "mychrdev"
 #define KBUF_SIZE (size_t)((10) * PAGE_SIZE)
 
+static struct class *my_device_class;  // device class
+
 static int mychrdev_open(struct inode *inode, struct file *file)
 {
     static int counter = 0;
@@ -70,12 +72,40 @@ static ssize_t __exit mychrdev_write(struct file *file,
     return nbytes;
 }
 
+static loff_t mychrdev_lseek(struct file *file, loff_t offset, int orig)
+{
+    loff_t testpos;
+    switch (orig)
+    {
+    case SEEK_SET:
+        testpos = offset;
+        break;
+    case SEEK_CUR:
+        testpos = file->f_pos + offset;
+        break;
+    case SEEK_END:
+        testpos = KBUF_SIZE + offset;
+        break;
+    default:
+        return -EINVAL; // all errors needs to be inverted on return
+    }
+
+    testpos = testpos < KBUF_SIZE ? testpos : KBUF_SIZE;
+    testpos = testpos >= 0 ? testpos : 0;
+    file->f_pos = testpos;
+
+    printk(KERN_INFO "Seeking to %lld position\n", testpos);
+
+    return testpos;
+}
+
 static const struct file_operations mycdev_fops = {
     .owner = THIS_MODULE,
     .read = mychrdev_read,
     .write = mychrdev_write,
     .open = mychrdev_open,
-    .release = mychrdev_release};
+    .release = mychrdev_release,
+    .llseek = mychrdev_lseek};
 
 static int __init init_chrdev(void)
 {
@@ -89,6 +119,11 @@ static int __init init_chrdev(void)
     cdev_init(my_cdev, &mycdev_fops); // file operations instance
     cdev_add(my_cdev, first, count);
 
+    my_device_class = class_create(THIS_MODULE, "my_device_class");
+    device_create(my_device_class, NULL, first, "%s", "my_chrdev");
+
+    printk(KERN_INFO "Created device class %s", MYDEV_NAME);
+
     return 0;
 }
 
@@ -96,10 +131,11 @@ static void __exit cleanup_chrdev(void)
 {
     printk(KERN_INFO "Leaving");
 
+    device_destroy(my_device_class, first);
+    class_destroy(my_device_class);
+
     if (my_cdev)
-    {
         cdev_del(my_cdev);
-    }
 
     unregister_chrdev_region(first, count);
 }
